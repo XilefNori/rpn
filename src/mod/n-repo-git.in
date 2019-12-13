@@ -1,0 +1,270 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+_n_repo-help-cmd-list-git() {
+    cat << 'EOL' | sed -r 's:^\s+::'
+    -- Git --
+    git.switch      - switch to branch (release/v4 -> release/v4.3.1)
+    git.last-tags   - show last created tags
+    git.origin      - hard reset current local <branch> to latest origin/<current-branch>
+    git.fetch       - fetch from remote origin
+    git.log         - show log
+    git.di          - show diff
+    git.info        - show [header, git log -1, git status]
+    git.master      - fetch + hard reset to master
+    git.st          - show git status
+EOL
+}
+
+_n_repo-help-command-git.switch() {
+cat << 'EOL'
+rpn git.switch [options] <branch> [<branch2> ...] - Checkout filtered repos to selected branch
+
+1. You can set more than one branch, if first branch not exists, then it will try to checkout next branch, and so on...
+
+2. You can set major version (v3) for version-tagged branches (vX.Y.Z), it will checkout last version branch (v3.4.8)
+For example you have 3 repo with these branches:
+- Repo A: release/v2.3.3, release/v2.3.2, release/v2.3.1
+- Repo B: release/v2.3.2, release/v2.3.1
+- Repo C: release/v2.3.4, release/v2.3.0,
+
+After you execute `rpn git.switch release/v2.3`, you will get:
+REPO: [ repo A ]  x day  [release/v2.3.3   ...]
+REPO: [ repo B ]  y day  [release/v2.3.2   ...]
+REPO: [ repo C ]  z day  [release/v2.3.4   ...]
+
+-- Options --
+-V - use smart `version-tagged` branch search
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+
+-- Actions --
+-F - fetch remote origin before switching
+-f - make --force checkout
+-o - reset hard to origin/<branch>
+EOL
+}
+
+_n_repo-help-command-git.origin() {
+cat << 'EOL'
+rpn git.origin [options] - Hard reset current local <branch> to latest origin/<current-branch>
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+EOL
+}
+
+_n_repo-help-command-git.log() {
+cat << 'EOL'
+rpn git.log [options] - Show log for filtered repos
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+
+-- Show options --
+-c <num> - show log with <num> commits count (default: 3)
+-m       - show only commit made by current `user.name` git config
+-h       - show HEAD and other pointers
+EOL
+}
+
+n-repo-.hint.branches() {
+    declare cache="$1"
+    declare fa_cache="$(_n_repo-cache-file "$FUNCNAME")" || return 1
+
+    if [[ -n $cache ]]; then
+        cached-cmd "$fa_cache" "$FUNCNAME" -u $cache
+    else
+        n-repo-do -c "git branch -a --list | sed 's:*::; s:^ *::; s:remotes/origin/::'" | sort -u | grep -v 'fatal:' | tee "$fa_cache"
+    fi
+}
+
+_n-repo-git-find-branch() {
+    git branch -a --list | grep "$1" | sed 's:*::; s:^ *::; s:remotes/origin/::' | sort -u --version-sort -r | head -n 1
+}
+
+n-repo-git.switch() {
+    declare switch_opts=() do_opts=()
+
+    # -- Arguments --
+    declare flags=":AOfoFV b:r:" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"      ; return ;;
+            A) n-repo-.hint.branches $N_REPO_CACHE_BRANCHES ; return ;;
+            f) switch_opts+=(-f) ;;
+            F) switch_opts+=(-F) ;;
+            o) switch_opts+=(-o) ;;
+            V) switch_opts+=(-V) ;;
+
+            b) do_opts+=(-b "${OPTARG}") ;;
+            r) do_opts+=(-r "${OPTARG}") ;;
+
+            :) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            ?) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+        esac; else
+            switch_opts+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    n-repo-do "${do_opts[@]}" -Qh << 'EOF'
+        _n_repo-git-switch "${switch_opts[@]}"
+EOF
+    echo
+
+    n-repo-l
+}
+
+_n_repo-git-switch() {
+    declare force origin fetch version_tagged
+
+    # -- Arguments --
+    declare flags="foFV" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            F) fetch=1 ;;
+            f) force=1 ;;
+            o) origin=1 ;;
+            V) version_tagged=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    declare branches=("${params[@]}")
+
+    [[ -n $origin ]] && fetch=1
+    [[ -n $fetch  ]] && git fetch
+
+    declare git_opts=()
+    [[ -n $force ]] && git_opts+=(-f)
+
+    declare swicthed
+    declare branch
+    for branch in "${branches[@]}"; do
+        if [[ -n $version_tagged ]]; then
+            branch="$(_n-repo-git-find-branch "$branch")"
+        fi
+
+        [[ -n $branch ]] && git checkout "${git_opts[@]}" "$branch" && { swicthed=1;  break; }
+    done
+
+    [[ $swicthed -eq 0 ]] && { echo 'Cannot switch'; return 1; }
+
+    if [[ -n $origin ]]; then
+        declare br="$(git rev-parse --abbrev-ref HEAD)";
+        git clean -fd
+        git reset --hard "origin/$br";
+    fi
+}
+
+n-repo-git.last-tags() {
+    n-repo-do "$@" << 'EOF'
+        declare last_tag="$(git tag -l --sort=-version:refname "v*" | head -n 3 | tr "\n" " ")"
+        printf -- "[ %-${max_length}s ] last tag: %s\n" "$repo" "$last_tag"
+EOF
+}
+
+n-repo-git.info() {
+    n-repo-do "$@" -h << 'EOF' | less -S
+        git --no-pager log --pretty=format:"%C(yellow)%h%Creset %<(12,trunc)%ad %C(green bold)%<(12)%an%Creset%C(blue bold)%d%Creset %s" --color -1; echo
+        git -c color.status=always status --short --branch
+EOF
+}
+
+n-repo-git.st() { echo 'git -c color.status=always status --short --branch' | n-repo-do "$@" -h  | less -S; }
+
+n-repo-git.di() { echo 'git diff --color' | n-repo-do "$@" -gh  | less -S; }
+
+n-repo-git.origin() {
+    n-repo-do "$@" -Qh << 'EOF'
+    declare br="$(git rev-parse --abbrev-ref HEAD)";
+
+    echo "-- Clearing --"                         &&
+    git clean -fd                                 &&
+    echo "-- Reset to origin/$br --"              &&
+    git fetch &&
+    git reset --hard "origin/$br";
+    echo '-- Status --'                &&
+    git status --short --branch
+EOF
+
+    n-repo-l
+}
+
+n-repo-git.fetch()  {
+    n-repo-do "$@" -Q << 'EOF'
+        printf -- "[ %-${max_length}s ] fetching ...\n" "$repo"
+        git fetch
+EOF
+
+    n-repo-l
+}
+
+n-repo-git.head()   { n-repo-do "$@" -Qhc 'git head'  ; n-repo-l; }
+
+n-repo-git.master() { n-repo-do "$@" -Qh <<EOF
+    git fetch &&
+
+    git checkout master --force    &&
+    git reset --hard origin/master &&
+    git branch -u origin/master
+
+    git status --short --branch
+EOF
+
+    n-repo-l;
+}
+
+n-repo-git.log() {
+    declare count my header
+        # -- Arguments --
+    declare flags=":c:mh b:r:" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            c) count=${OPTARG} ;;
+            m) my=1 ;;
+            h) header=1 ;;
+
+            b) do_opts+=(-b "${OPTARG}")         ;;
+            r) do_opts+=(-r "${OPTARG}")         ;;
+
+            :) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            ?) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            *) echo "Unexpected: ${flag} ${OPTARG} ${OPTIND}"; return 1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -z $count ]] && count=3
+
+    declare git_opts
+    git_opts+=(-$count)
+
+    [[ -n $my ]] && git_opts+=(--author="$(git config user.name)")
+
+    if [[ -n $header ]]; then
+        git_opts+=('--pretty=format:%C(yellow)%h%Creset %<(12,trunc)%ad %C(green bold)%<(12)%an%Creset%C(blue bold)%d%Creset %s')
+    else
+        git_opts+=('--pretty=format:%C(yellow)%h%Creset %<(12,trunc)%ad %C(green bold)%<(12)%an%Creset %s')
+    fi
+
+    n-repo-do "${do_opts[@]}" -h << 'EOF' | less -S
+        git log --color "${git_opts[@]}" --date=relative
+        echo
+EOF
+}

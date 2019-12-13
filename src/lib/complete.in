@@ -1,0 +1,83 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+_complete-cmd2() {
+    declare cmd="$1";
+    declare cur="${COMP_WORDS[COMP_CWORD]}";
+    declare -a params=("${COMP_WORDS[@]:1:${#COMP_WORDS[@]}-2}")
+
+    COMPREPLY=();
+    if [[ "${cur:0:1}" == '-' ]]; then
+        declare opts="$($cmd -O)";
+        COMPREPLY=($( compgen -W "${opts}" -- "${cur}" ));
+        return 0;
+    fi;
+
+    if [[ "${cur:0:1}" != '-' ]]; then
+        declare files="$($cmd "${params[@]}")";
+        COMPREPLY=($( compgen -W "${files}" -- "$cur" ));
+        return 0;
+    fi;
+    return 0
+}
+
+_complete-cmd() {
+    declare cmd="${COMP_WORDS[0]##*/}";
+    declare cur="${COMP_WORDS[COMP_CWORD]}";
+    declare -a params=("${COMP_WORDS[@]:1:${#COMP_WORDS[@]}-2}")
+
+    COMPREPLY=();
+    if [[ "${cur:0:1}" == '-' ]]; then
+        declare opts="$($cmd -O)";
+        COMPREPLY=($( compgen -W "${opts}" -- "${cur}" ));
+        return 0;
+    fi;
+
+    if [[ "${cur:0:1}" != '-' ]]; then
+        declare files="$($cmd "${params[@]}")";
+        COMPREPLY=($( compgen -W "${files}" -- "$cur" ));
+        return 0;
+    fi;
+    return 0
+}
+
+_complete-cmd-options() {
+	declare flags="$1"
+	flags="${flags//:/}"
+	flags="${flags/O/}"
+
+	echo "$flags" | sed 's/./-\0\n/g'
+}
+
+complete-option() {
+    complete | grep -P -- "(?= $1\$)"
+}
+complete -A function complete-option
+
+complete-function() {
+    declare -a grep_opts
+    declare verbose=0
+
+    # -- Arguments --
+    declare flags="v" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        getopts "$flags" flag && { case $flag in
+            v) verbose=$((verbose+1)) ;;
+        esac; } || {
+            params+=("${!OPTIND}"); ((OPTIND++))
+        }
+    done
+
+    if [[ $verbose -ge 2 ]] ; then
+        declare func="$(complete | grep -oP -- "(?<=-F ).+(?= $1\$)")"
+
+        type "$func" | less -XF
+    else
+        [[ $verbose -eq 0 ]] && grep_opts+=(-o)
+
+        complete | grep -P "${grep_opts[@]}" -- "(?<=-F ).+(?= $1\$)"
+    fi
+}
+
+complete -A function complete-function

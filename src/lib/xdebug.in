@@ -1,0 +1,227 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+XDEBUG_CONFIG_ORG="$XDEBUG_CONFIG"
+
+XDEBUG_COLOR_ON=$LG
+XDEBUG_COLOR_OFF_BUILD=$DY
+XDEBUG_COLOR_OFF=$DY
+XDEBUG_COLOR_HOT=$LB
+XDEBUG_COLOR_COLD=$DY
+XDEBUG_COLOR_ENABLED=$LW
+XDEBUG_COLOR_DISABLED=$DY
+
+xdebug-off() {
+    [[ -n "$XDEBUG_CONFIG" ]] && {
+        XDEBUG_CONFIG_SAVED="$XDEBUG_CONFIG"
+        XDEBUG_CONFIG=''
+    }
+
+    xdebug-env "$@"
+}
+
+xdebug-on() {
+    [[ -n "$XDEBUG_CONFIG_SAVED" ]] && XDEBUG_CONFIG="$XDEBUG_CONFIG_SAVED"
+
+    xdebug-env "$@"
+}
+
+xdebug-env() {
+    declare verbose info build
+    # -- Arguments --
+    declare flags="OAvib" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+              O) _complete-cmd-options "$flags"; return ;;
+              A) return ;;
+              v) verbose=1 ;;
+              i) info=1 ;;
+              b) build=1;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    if [[ -n $info || -n $build ]]; then
+        info='xdebug'
+        [[ -n $build ]] && info="${info}-build"
+        info="${info}: "
+
+        declare xdebug_enabled="$(xdebug-php | grep -P 'support.*enabled')"
+
+        if [[ -n $xdebug_enabled    ]]; then
+            [[ -n $XDEBUG_CONFIG     ]] && info="${info} ${XDEBUG_COLOR_ON}on${NC}"   || info="${info} ${XDEBUG_COLOR_OFF}off${NC}"
+            [[ -n $XDEBUG_CONFIG_ORG ]] && info="${info} ${XDEBUG_COLOR_HOT}hot${NC}" || info="${info} ${XDEBUG_COLOR_COLD}cold${NC}"
+        else
+            if [[ -n $build ]]; then
+
+                [[ -n $XDEBUG_CONFIG ]] && info="${info} ${XDEBUG_COLOR_ON}on${NC}" || info="${info} ${XDEBUG_COLOR_OFF_BUILD}off${NC}"
+            else
+                info="${info} ${XDEBUG_COLOR_DISABLED}disabled${NC}"
+            fi
+        fi
+
+        echo $info
+        return
+    fi
+
+    echo "PHP_IDE_CONFIG='$PHP_IDE_CONFIG'"
+    echo "XDEBUG_CONFIG='$XDEBUG_CONFIG'"
+
+    if [[ -n $verbose ]]; then
+        echo "XDEBUG_CONFIG_SAVED='$XDEBUG_CONFIG_SAVED'"
+        echo "XDEBUG_CONFIG_ORG='$XDEBUG_CONFIG_ORG'"
+    fi
+}
+
+xdebug-php() {
+    if ! which php > /dev/null; then echo "No php installed" >&2; return 1; fi
+
+    php -i | grep xdebug | less
+}
+
+xdebug-status() {
+    echo "-- PHP --------------------------------"
+    which php
+    php -v
+    echo ''
+    echo "-- Enviroment -------------------------"
+    xdebug-env
+    echo ''
+    echo "-- Xdebug extension -------------------"
+    xdebug-php | grep --color=no -P '(support|default_enable|remote|idekey)'
+}
+
+# ----------------------------------------------------------------------------------
+
+xdebug-cfg() {
+    declare prefix="${FUNCNAME%%-*}"
+
+    var-cfg "${prefix^^}" "$@"
+}
+
+_xdebug-cfg() {
+    declare cur="${COMP_WORDS[COMP_CWORD]}"
+
+    # echo; echo "$FUNCNAME [$COMP_CWORD] ${COMP_WORDS[@]}" >&2
+
+    COMPREPLY=()
+
+    if [[ ${COMP_CWORD} -eq 1 ]] ; then
+        declare opts="$(xdebug-cfg -A)";
+
+        COMPREPLY=($( compgen -W "${opts}" -- "${cur}" ));
+        return 0
+    fi
+}
+
+complete -F _xdebug-cfg xdebug-cfg
+
+xdebug-.list-cmd() {
+    declare prefix='xdebug-'
+
+    declare full
+    # -- Arguments --
+    declare flags="fOA" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) return ;;
+            f) full=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    declare -F | sed 's/declare -f //' | grep -P "^$prefix" | sed -e "s~$prefix~~"
+}
+
+xdebug() {
+    [[ -z $1 ]] && {
+        xdebug-.list-cmd
+
+        return
+    }
+
+    declare prefix='xdebug-'
+    declare func help name cmd
+
+    cmd="$1"
+    func="$prefix$cmd"
+
+    if [[ $2 = help || $2 = .show ]]; then
+        {
+
+            help="_xdebug-help-command-$cmd"
+
+            if declare -f "$help" > /dev/null && [[ $2 = help ]]; then
+                $help
+            else
+                type "$func"
+            fi
+
+        } | less -FX
+
+        return
+    fi
+
+    "$func" "${@:2}"
+}
+
+_xdebug() {
+    declare cur="${COMP_WORDS[COMP_CWORD]}"
+    declare cmd="${COMP_WORDS[1]}"
+    declare prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # echo; echo "$FUNCNAME [$COMP_CWORD] ${COMP_WORDS[@]}" >&2
+
+    COMPREPLY=()
+
+    if [[ ${COMP_CWORD} -eq 1 ]] ; then
+        declare commands
+
+        [[ '.' == "${cmd:0:1}" ]] && {
+            commands="$(xdebug | grep -P "^\.")";
+        } || {
+            commands="$(xdebug | grep -Pv "^\.")";
+        }
+
+        COMPREPLY=( $( compgen -W "$commands" -- "$cur" ) )
+
+        return
+    fi
+
+    declare func="xdebug-$cmd"
+
+    if [[ "${cur:0:1}" == '-' ]]; then
+        opts="$($func -O)";
+        COMPREPLY=($( compgen -W "${opts}" -- "${cur}" ));
+
+        return
+    fi
+
+    declare complete="$(complete | grep -oP -- "(?<=-F ).+(?= $func\$)")"
+    if [[ -n $complete ]]; then
+        COMP_WORDS=("${COMP_WORDS[@]:1}")
+        COMP_CWORD=$((COMP_CWORD-1))
+
+        $complete
+
+        return
+    fi
+
+    #    if declare -f "_${func}" > /dev/null; then
+    #        COMP_WORDS=("${COMP_WORDS[@]:1}")
+    #        COMP_CWORD=$((COMP_CWORD-1))
+    #
+    #        _$func
+    #    fi
+
+    return 0
+}
+
+complete -F _xdebug xdebug x
+
+alias x=xdebug

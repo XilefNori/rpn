@@ -1,0 +1,293 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+_n_repo-help-cmd-list-dc() {
+    cat << 'EOL' | sed -r 's:^\s+::'
+    -- Docker --
+    dc.build    - build docker containers
+    dc.up-down  - down & up docker containers
+    dc.stop     - stop docker containers
+    dc.up       - up docker containers
+
+    dc.env      - working with .env files
+    dc.show     - show current container list
+
+    -- Symfony inside docker (commands executed inside docker containers for each repo) --
+    code.clear-cache - clear cache for symfony project
+    code.install     - full install composer packages (with `scripts` and `platform-requirements`)
+    code.migration   - run symfony migration
+    code.prepare     - code.(clear-cache + install + migration)
+EOL
+}
+
+_n_repo-help-command-dc.env() {
+cat << 'EOL'
+rpn dc.env [options] - show diff between .env <-> .env.dist, or paste .env.dist -> .env
+
+Executing without options just show list of repos where .env differs from .env.dist
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+
+-- Actions --
+-v - show contents of diff between .env <-> .env.dist
+-M - force move .env.dist -> .env
+EOL
+}
+
+n-clear-cache() {
+	if [[ ! -e bin/console ]]; then echo "No [bin/console] file"; return 0; fi
+
+    if ! n-container-cur php &> /dev/null; then n-dc up; fi
+
+	echo '-- Clearing cache --'
+	n-run 'php bin/console cache:clear -vv'
+}
+
+n-composer-install() {
+    if [[ ! -e composer.json ]]; then echo "No [composer.json] file"; return 0; fi
+
+    if ! n-container-cur php &> /dev/null; then n-dc up; fi
+
+    echo '-- Composer install --'
+    n-composer 'install --optimize-autoloader --no-scripts' &&
+
+    sudo chown "$(id -u):$(id -g)" -R .
+}
+
+n-migration() {
+    declare dr_migrations=src/Migrations
+
+    if [[ ! -e "src/Migrations" ]]; then echo "No [src/Migrations] directory"; return 0; fi
+
+    if ! n-container-cur php &> /dev/null; then n-dc up; fi
+
+    echo '-- Execute migrations --'
+    n-php 'bin/console doctrine:migrations:migrate'
+}
+
+n-prepare() {
+    sudo cat /dev/null &&
+    n-composer-install &&
+    n-clear-cache      &&
+    n-migration
+}
+
+n-repo-code.clear-cache() {
+    [[ $1 = -A || $1 = -O ]] && return
+
+    declare start=$(date '+%s')
+    n-repo-do -Qh "$@" -c 'n-clear-cache'
+    _n_repo-show-time "${FUNCNAME}" "$start"
+}
+
+n-repo-code.install()     {
+    [[ $1 = -A || $1 = -O ]] && return
+
+    declare start=$(date '+%s')
+    sudo cat /dev/null && n-repo-do -Qh "$@" -c 'n-composer-install'
+    _n_repo-show-time "${FUNCNAME}" "$start"
+}
+
+n-repo-code.migration()   {
+    [[ $1 = -A || $1 = -O ]] && return
+
+    declare start=$(date '+%s')
+    n-repo-do -Qh "$@" -c 'n-migration'
+    _n_repo-show-time "${FUNCNAME}" "$start"
+}
+
+n-repo-code.prepare()     {
+    [[ $1 = -A || $1 = -O ]] && return;
+
+    declare start=$(date '+%s')
+    sudo cat /dev/null && n-repo-do -Qh "$@" -c 'n-prepare'
+    _n_repo-show-time "${FUNCNAME}" "$start"
+}
+
+xdebug-docker-on() {
+    declare container="$(n-container-cur php)"
+    echo "-- Stopping [$container] --"
+    docker stop "$container"
+
+    echo "-- Starting [$container] with xdebug-on --"
+    xdebug-on -b
+    n-dc up
+    xdebug-off -b
+}
+
+xdebug-docker-off() {
+    declare container="$(n-container-cur php)"
+
+    echo "-- Stopping [$container] --"
+    docker stop "$(n-container-cur php)"
+
+    echo "-- Starting [$container] with xdebug-off --"
+    xdebug-off -b
+    n-dc up
+}
+
+n-dc() {
+    case $1 in
+            up) make dev-up       ;;
+          stop) make dev-stop     ;;
+      up-build) make dev-up-build ;;
+       up-down) make dev-up-down  ;;
+    esac
+}
+
+n-repo-dc.show() {
+    echo
+    echo "-- Container list --"
+    echo
+
+    _n_repo-dc-ps
+}
+
+n-repo-dc.up() {
+    declare quite verbose
+
+    [[ $N_REPO_QUITE -gt 0 ]] && quite=1
+
+    # -- Arguments --
+    declare flags=":qOAv" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"      ; return ;;
+            A)                                       return ;;
+            q) quite=1 ;;
+            v) verbose=$((verbose+1)) ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -n $verbose ]] && { quite=; }
+
+    declare start=$(date '+%s')
+
+    [[ -n $quite ]] && {
+        echo -n '.'
+        declare fa_log="$(mktemp)-init.err"
+    }
+
+    {
+        _n_repo-dc-before-up
+    } |& {
+        if [[ -n $quite ]]; then
+            cat > "$fa_log"
+        else
+            cat
+        fi
+    }
+
+    declare result=${PIPESTATUS[0]}
+
+    if [[ -n $quite ]]; then
+        [[ $result -ne 0 ]] && {
+            echo
+            echo "${DR}--- init ERROR ($(_n_repo-error $result)) ---${NC}"
+            echo
+
+            cat "$fa_log"
+            echo
+        }
+
+        rm -f "$fa_log"
+    fi
+
+n-repo-do -Qh "$@" <<EOF
+    if [[ ! -e .env ]]; then
+        cp .env.dist .env
+    fi
+
+    n-dc up
+EOF
+
+    _n_repo-dc-after-up
+    _n_repo-show-time "${FUNCNAME}" "$start"
+
+    n-repo-dc.show
+}
+
+n-repo-dc.up-down() {
+    [[ $1 = -A || $1 = -O ]] && return
+
+    declare start=$(date '+%s')
+
+    n-repo-do -Qh "$@" <<EOF
+        n-dc stop
+        n-dc up
+EOF
+
+    _n_repo-dc-after-up
+    _n_repo-show-time "${FUNCNAME}" "$start"
+
+    n-repo-dc.show
+}
+
+_n_repo-dc-before-up() { :; }
+_n_repo-dc-after-up() { :; }
+
+N_REPO_DC_PS_FORMAT="{{.Names}}\t{{.Image}}\t{{.Ports}}"
+
+_n_repo-dc-ps() {
+    docker ps --format "$N_REPO_DC_PS_FORMAT" | sort | column -s$'\t' -t
+
+    echo
+    echo "Total count: $(docker ps --format '{{.ID}}' | wc -l)"
+}
+
+n-repo-dc.env() {
+	declare verbose move do_opts
+
+    # -- Arguments --
+    declare flags="AOvM b:r:" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A)                                 return ;;
+            v) verbose=1 ;;
+            M) move=1    ;;
+
+            b) do_opts+=(-b "${OPTARG}")         ;;
+            r) do_opts+=(-r "${OPTARG}")         ;;
+
+            :) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            ?) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            *) echo "Unexpected: ${flag} ${OPTARG} ${OPTIND}"; return 1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+	[[ $move ]] && {
+		n-repo-do "${do_opts[@]}" -hc 'cp -f .env.dist .env; diff .env.dist .env -sq'
+
+		return
+	}
+
+    if [[ $verbose ]]; then
+		n-repo-do "${do_opts[@]}" -hc 'command diff -wbBu .env.dist .env -s | { colordiff 2> /dev/null || cat; }' | less -S
+    else
+		n-repo-do "${do_opts[@]}" -hc 'command diff -wbBu .env.dist .env -q'
+    fi
+}
+
+n-repo-dc.build() {
+    declare start=$(date '+%s')
+
+    n-repo-do -Qh "$@" -c 'n-dc up-build';
+
+    _n_repo-dc-after-up
+    _n_repo-show-time "${FUNCNAME}" "$start"
+
+    n-repo-dc.show
+}
+n-repo-dc.stop()  { n-repo-do -Qh "$@" -c 'n-dc stop'; }
+

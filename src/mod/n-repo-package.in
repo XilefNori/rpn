@@ -1,0 +1,81 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+_n_repo-help-cmd-list-package() {
+    cat << 'EOL' | sed -r 's:^\s+::'
+    -- Composer packages --
+    package <name>  - print repo name and package version for repos which has package <name>
+    package.install - install composer packages
+EOL
+}
+
+_n_repo-help-command-package() {
+cat << 'EOL'
+rpn package <name> [options] - print repo name and package version for repos which has package <name>
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+EOL
+}
+
+
+n-repo-.hint.package() {
+    declare cache="$1"
+    declare fa_cache="$(_n_repo-cache-file "$FUNCNAME")" || return 1
+
+    if [[ -n $cache ]]; then
+        cached-cmd "$fa_cache" "$FUNCNAME" -u $cache
+    else
+        n-repo-do -c "composer show -N 2> /dev/null" | sed -e 's/[[:space:]]//g' |  sort -u  | tee "$fa_cache"
+    fi
+
+}
+
+n-repo-package() {
+    declare do_opts header
+
+    # -- Arguments --
+    declare flags=":AO b:r:" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"    ; return ;;
+            A) n-repo-.hint.package $N_REPO_CACHE_PACKAGE  ; return ;;
+
+            b) do_opts+=(-b "${OPTARG}")         ;;
+            r) do_opts+=(-r "${OPTARG}")         ;;
+
+            :) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            ?) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            *) echo "Unexpected: ${flag} ${OPTARG} ${OPTIND}"; return 1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    declare package="${params[0]}"
+
+    [[ -z $package ]] && { n-repo-.hint.package $N_REPO_CACHE_PACKAGE; return; }
+
+    n-repo-do "${do_opts[@]}" << 'EOF'
+        if [ -e composer.json ]; then
+            declare info="$(composer show ${package}*)"
+            declare repo="$(basename $(pwd))"
+
+            [[ -n $info ]] && printf -- "REPO: [ %-${max_length}s ] %s\n" "$repo" "$info"
+        fi
+EOF
+}
+
+N_REPO_COMPOSER_OPTS=(--ignore-platform-reqs --no-scripts)
+
+n-repo-package.install() {
+    n-repo-do -Qh "$@" <<'EOF'
+        if [[ ! -e composer.json ]]; then echo "No [composer.json] file"; return 0; fi
+
+        yes | composer install "${N_REPO_COMPOSER_OPTS[@]}"
+EOF
+}

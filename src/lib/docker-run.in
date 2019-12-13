@@ -1,0 +1,21 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+N_CONTAINER_USER=developer
+N_CONTAINER_CFG_FILE=docker-compose.dev.yml
+
+n-container-cur() {
+    declare name="$1"
+    [[ -z "$name" ]] && {
+        grep -hoP '(?<=container_name:)\s*\S+' docker-compose*.yml | sed 's:"::g; s~[ \t]*~~g' | sort -u
+
+        return
+    }
+
+    grep -hoP '(?<=container_name:)\s*\S+' docker-compose*.yml | sed 's:"::g; s~[ \t]*~~g' | sort -u | grep $name
+}
+
+n-run() { echo "$@" | docker exec -i -u "$N_CONTAINER_USER" "$(n-container-cur php)" bash -; }
+
+n-php()      { n-run 'XDEBUG_CONFIG=' php         "$@"; }
+n-composer() { n-run 'XDEBUG_CONFIG= COMPOSER_DISCARD_CHANGES=true' composer  "$@"; }

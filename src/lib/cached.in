@@ -1,0 +1,95 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+cached-cmd() {
+    declare refresh verbose update
+
+    # -- Arguments --
+    declare flags="vru:" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            u) update="${OPTARG}"  ;;
+            r) refresh=1 ;;
+            v) verbose=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    declare fa_cache="${params[0]}"
+    declare cmd_line=("${params[@]:1}")
+
+    [[ -z $fa_cache ]] && { echo 'Must set fa_cache!'     >&2; return 1; }
+    [[ -z $cmd_line ]] && { echo 'Must set command line!' >&2; return 1; }
+
+    [[ -z $update ]] && update=600
+
+    [[ -n $verbose ]] && {
+        echo "-- Run -----"
+        echo "fa_cache=$fa_cache"
+        echo "cmd_line=$cmd_line"
+        echo "------------"
+    } >&2
+
+    if [[ ! -f $fa_cache ]]; then
+        touchf "$fa_cache" || { echo 'Cannot create cache [$fa_cache]!' >&2; return 1; }
+    fi
+
+    [[ -w $fa_cache ]] || { echo 'Cache not writeable cache [$fa_cache]!' >&2; return 1; }
+
+    declare ts="$(($(date +%s) - $(date +%s -r "$fa_cache")))"
+
+    [[ $ts -gt $update ]] && refresh=1
+
+    [[ -n $verbose ]] && {
+        echo "-- Cache --"
+        echo "cache life=$ts"
+        echo "cache update=$update"
+        if [[ ! -s $fa_cache  ]]; then
+            echo "Will refresh cache (empty cache file)"
+        elif [[ -n $refresh ]]; then
+            echo "Will refresh cache (time elapsed)"
+        else
+            echo "No cache refresh"
+        fi
+        echo "----------"
+    } >&2
+
+
+    [[ ! -s $fa_cache || -n $refresh ]] && {
+        "${cmd_line[@]}" > "$fa_cache"
+    }
+
+    cat "$fa_cache"
+}
+
+cache-file() {
+    declare name prefix
+
+    if   [[ ${#@} -eq 1 ]]; then
+        prefix="${1%%-*}"
+        name="${1#*-}"
+    elif [[ ${#@} -eq 2 ]]; then
+        name="${1}"
+        prefix="${2}"
+    else
+        echo "Usage: $FUNCNAME <prefix-name> or $FUNCNAME <name> <prefix>" >&2
+        return 1
+    fi
+
+    prefix="${prefix^^}"
+    prefix="${prefix/-/_}"
+    declare var="${prefix}_DIR"
+
+    name="${name/\//_}"
+
+    [[ -z ${!var} ]] && { echo "Variable ${var} is empty!" >&2; return 1; }
+
+    declare fa_cache="${!var}/.cache/$name"
+
+    [[ ! -e $fa_cache ]] && touchf "$fa_cache"
+    [[ ! -e $fa_cache ]] && return 1
+
+    echo "$fa_cache"
+}

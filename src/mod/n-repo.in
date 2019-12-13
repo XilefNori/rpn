@@ -1,0 +1,1183 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+# Script ENV -------------------------------------------------------------------------------------
+
+SRC="${BASH_SOURCE[0]//\\//}"
+[[ -z "$SRC" ]] && SRC="$(readlink -f $0)"
+DIR="$(cd -P "${SRC%/*}" > /dev/null && pwd)"
+
+N_REPO_DIR_INSTALL="$(cd -P "${DIR}/../.." > /dev/null && pwd)"
+
+# Config ENV -------------------------------------------------------------------------------------
+
+export N_REPO_DIR_ROOT
+
+[[ -z $N_REPO_DIR_GROUPS ]] && N_REPO_DIR_GROUPS=~/projects/_groups
+[[ -z $N_REPO_DIR_ROOT   ]] && N_REPO_DIR_ROOT=~/projects/_groups/main
+
+N_REPO_CACHE_FIND_HINT=600
+N_REPO_CACHE_PACKAGE=600
+N_REPO_CACHE_BRANCHES=60
+N_REPO_CACHE_BRANCHES_CUR=60
+
+N_REPO_QUITE=1
+
+N_REPO_VIEW_CONFIG_AS_ENV=0
+N_REPO_VIEW_MAN_AS_MAN=1
+
+N_REPO_NS_IMPORT=
+
+N_REPO_LINE_COLOR_BEHIND=$DR
+N_REPO_LINE_COLOR_AHEAD=$DG
+N_REPO_LINE_COLOR_MODIFIED=$LB
+N_REPO_LINE_COLOR_UNTRACKED=$DY
+N_REPO_LINE_COLOR_MOD_UNTRACKED=$DY
+N_REPO_LINE_COLOR_NAME=$LB
+
+N_REPO_LINE_LONG=1
+N_REPO_LINE_BRANCH_LEN=25
+N_REPO_LINE_REPO_LEN=15
+
+N_REPO_LINE_AHEAD_SIGN=▲
+N_REPO_LINE_BEHIND_SIGN=▼
+
+# Config ENV -------------------------------------------------------------------------------------
+
+n-repo-cfg() {
+    declare prefix=N_REPO_
+    declare environment
+
+    # -- Arguments --
+    declare flags="AOep" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) set | grep -oP "^$prefix\w+=" | sed "s:^$prefix::; s:=$::" | tr '[:upper:]_' '[:lower:]-' ; return ;;
+            p) environment=0 ;;
+            e) environment=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -z $environment ]] && environment="$N_REPO_VIEW_CONFIG_AS_ENV"
+
+    declare var
+    if [[ "${#params[@]}" -gt 0 ]]; then
+        var="${prefix}$(echo "${params[0]}" | tr '[:lower:]-' '[:upper:]_')"
+    fi
+
+    if [[ "${#params[@]}" -gt 1 ]]; then
+        declare -g "$var=${params[1]}";
+    fi
+
+    {
+        if [[ -z ${params[0]} ]]; then
+            set | grep -P "^$prefix\w+="
+
+            return 0
+        fi
+
+        if [[ "${#params[@]}" -gt 1 ]]; then
+            set | grep -P "^$var="
+        else
+            set | grep -P "^$var\w*="
+        fi
+    } | {
+        if [[ $environment -gt 0 ]]; then
+            cat
+        else
+            sed -re "s:$prefix(\w+):\L\1:" -e 's:=:\t:' | awk '{ gsub("_","-",$1); print }' FS='\t' OFS='\t' | column -s$'\t' -t
+        fi
+    } | {
+        if [[ -z ${params[0]} ]]; then less -FX; else cat; fi
+    }
+}
+
+n-repo-root() {
+    declare verbose
+
+    # -- Arguments --
+    declare flags="AOv" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) n-repo-.groups                 ; return ;;
+            v) verbose=1                              ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    declare dir="${params[0]}"
+
+    [[ -z $dir ]] && {
+        if [[ -n $verbose ]]; then
+            echo "$N_REPO_DIR_ROOT"
+        else
+            basename "$N_REPO_DIR_ROOT"
+        fi
+
+        return
+    }
+
+    declare path="$N_REPO_DIR_GROUPS/$dir"
+
+    [[ ! -e $path ]] && path="$(cd "$dir" > /dev/null && pwd -P)"
+    [[ ! -e $path ]] && { echo "File/directory [$dir] does not exist! " 1>&2; return 1; }
+
+    N_REPO_DIR_ROOT="$path"
+    echo "$N_REPO_DIR_ROOT"
+}
+
+n-repo-cd() {
+    # -- Arguments --
+    declare flags="AO" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) n-repo-.list                  ; return ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -z $1 ]] && { cd "$N_REPO_DIR_ROOT"; return; }
+
+    cd "$N_REPO_DIR_ROOT/${params[0]}"
+}
+
+n-repo-.cd-group() {
+    # -- Arguments --
+    declare flags="AO" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) n-repo-.groups                 ; return ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -z $1 ]] && { cd "$N_REPO_DIR_ROOT"; return; }
+
+    cd "$N_REPO_DIR_GROUPS/${params[0]}"
+}
+
+n-repo-.groups() {
+    declare verbose
+
+    # -- Arguments --
+    declare flags="AOv" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A)                                 return ;;
+            v) verbose=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    if [[ $verbose ]]; then
+        declare dir
+        for dir in $(find -L "$N_REPO_DIR_GROUPS/" -mindepth 1 -maxdepth 1 -printf "%f\n" | sort); do
+            echo "$dir"
+            find -L "$N_REPO_DIR_GROUPS/$dir" -mindepth 1 -maxdepth 1 -printf "    %f\n" | sort;
+        done
+
+    else
+        find -L "$N_REPO_DIR_GROUPS/" -mindepth 1 -maxdepth 1 -printf "%f\n" | sort;
+    fi
+}
+
+n-repo-.dirs()  {
+    [[ $1 = -A || $1 = -O ]] && return
+
+    find -L "$N_REPO_DIR_ROOT/" -maxdepth 2 -type d -name '.git' -printf "%h\n" | grep -vP '\.[^/]+$' | sort
+}
+
+n-repo-.list()  {
+    declare reorder
+
+    # -- Arguments --
+    declare flags="AOr" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A)                                 return ;;
+            r) reorder=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    if [[ "${#params[@]}" -eq 0 ]]; then
+        n-repo-.dirs | sed "s:$N_REPO_DIR_ROOT/::"
+
+        return
+    fi
+
+    declare fa_repos="$(_n_repo-cache-file repo-need)" || return 1
+    echo "${params[*]}" | tr " " "\n" > "$fa_repos"
+
+    if [[ -n $reorder ]]; then
+        declare fa_list="$(_n_repo-cache-file repo-list)" || return 1
+
+        n-repo-.dirs | sed "s:$N_REPO_DIR_ROOT/::" > "$fa_list"
+
+        grep    -f "$fa_list"  "$fa_repos"
+        grep -v -f "$fa_repos" "$fa_list"
+
+        rm -f "$fa_list" "$fa_repos"
+    else
+        n-repo-.dirs | sed "s:$N_REPO_DIR_ROOT/::" | grep -f "$fa_repos"
+    fi
+
+    rm -f "$fa_repos"
+}
+
+N_REPO_FIND_HINT=(config .docker)
+N_REPO_FIND_DEPTH=4
+N_REPO_FIND_SHORT=1
+
+n-repo-.hint.find() {
+    declare cache="$1"
+    declare fa_cache="$(_n_repo-cache-file "$FUNCNAME")" || return 1
+
+    if [[ -n $cache ]]; then
+        cached-cmd "$fa_cache" "$FUNCNAME" -u $cache
+    else
+        {
+            n-repo-do << 'EOF'
+            find -L "$N_REPO_DIR_ROOT/$repo" -mindepth 1 -maxdepth 1 -type f -printf "%f\n"
+
+            declare dir
+            for dir in "${N_REPO_FIND_HINT[@]}"; do
+                [[ -d "$N_REPO_DIR_ROOT/$repo/$dir" ]] || continue
+
+                find -L "$N_REPO_DIR_ROOT/$repo/$dir" -type f -printf "%f\n"
+            done
+EOF
+        } | sort -u | tee "$fa_cache"
+    fi
+}
+
+n-repo-find()   {
+    declare do_opts cat iname regex depth short grep
+    declare grep_opts=()
+
+    # -- Arguments --
+    declare flags=":AOG:g:d:i:x:csf r:b:p:" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) n-repo-.hint.find $N_REPO_CACHE_FIND_HINT; return ;;
+            c) cat=1 ;;
+
+            i) iname+=("${OPTARG}") ;;
+            x) regex+=("${OPTARG}") ;;
+
+            g) grep="${OPTARG}"; grep_opts+=(-P) ;;
+            G) grep="${OPTARG}"; grep_opts+=(-F) ;;
+            d) depth="${OPTARG}" ;;
+
+            s) short=1 ;;
+            f) short=0 ;;
+
+            b) do_opts+=(-b "${OPTARG}") ;;
+            r) do_opts+=(-r "${OPTARG}") ;;
+            p) do_opts+=(-p "${OPTARG}") ;;
+
+            :) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            ?) [[ -n ${OPTARG} ]] && do_opts+=("-${OPTARG}")   ;;
+            *) echo "Unexpected: ${flag} ${OPTARG} ${OPTIND}"; return 1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -z $short ]] && short=$N_REPO_FIND_SHORT
+
+    declare find_opts=()
+
+    [[ -z $depth ]] && depth=$N_REPO_FIND_DEPTH
+
+    find_opts+=(-maxdepth $depth)
+    find_opts+=(-type f)
+
+    for i in "${params[@]}"; do find_opts+=(-name "$i");  done
+    for i in "${iname[@]}" ; do find_opts+=(-iname "*$i*"); done
+    for i in "${regex[@]}" ; do find_opts+=(-regex ".*$i"); done
+
+    # find -L "$N_REPO_DIR_ROOT" "${find_opts[@]}"
+    # echo xargs grep -i "${grep_opts[@]}" "$grep"
+
+    n-repo-do "${do_opts[@]}" -c 'find -L "$N_REPO_DIR_ROOT/$repo" "${find_opts[@]}"' | {
+        if [[ -n $grep ]]; then
+            xargs grep -i "${grep_opts[@]}" "$grep"
+        elif [[ -n $cat ]]; then
+             while IFS= read -r line; do
+                echo "---[ $line ]---"
+
+                cat "$line"
+            done;
+
+        else
+            cat
+        fi
+    } | {
+        if [[ $short -gt 0 ]]; then
+            sed "s:$N_REPO_DIR_ROOT/\?::"
+        else
+            cat
+        fi
+    }
+}
+
+n-repo-do() (
+    declare dir cmd quite file header verbose list changes branch quite_prefer
+    declare less show_script no_header column repos reorder execute_as_script
+
+    # -- Arguments --
+    declare flags=":Ap:b:f:c:r:R:qhvslgGiLOSHtQ" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) return ;;
+
+            b) branch="${OPTARG}" ;;
+            p) package="${OPTARG}" ;;
+            r) repos+=("${OPTARG}") ;;
+            R) repos+=("${OPTARG}") ; reorder=1 ;;
+
+            f) file="${OPTARG}" ;;
+            c) cmd="${OPTARG}" ;;
+
+            l) list=1 ;;
+            h) header=1 ;;
+            H) no_header=1 ;;
+            t) column=1 ;;
+            s) execute_as_script=1 ;;
+            q) quite=1 ;;
+            Q) [[ $N_REPO_QUITE -gt 0 ]] && quite_prefer=1 ;;
+            S) show_script=1 ;;
+            v) verbose=$((verbose+1)) ;;
+            L) less=1 ;;
+            g) changes=yes ;;
+            G) changes=no ;;
+
+            :) [[ -n ${OPTARG} ]] && params+=("-${OPTARG}")   ;;
+            ?) [[ -n ${OPTARG} ]] && params+=("-${OPTARG}")   ;;
+            *) echo "Unexpected: ${flag} ${OPTARG} ${OPTIND}" ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ ${#params[@]} -gt 0 && -z $cmd ]] && cmd="${params[*]}"
+
+    # -- Config tuning --
+
+    [[ -n $list ]] && header=1
+
+    if [[ ${#repos[@]} -eq 1 ]]; then
+        quite=0
+
+        if [[ ${repos[0]} = . ]]; then
+            repos=($(basename $(git rev-parse --show-toplevel)))
+        fi
+    fi
+
+    [[ $quite_prefer -gt 0 ]] && { [[ -z $quite ]] && quite=1; }
+
+    [[ $quite        -gt 0 ]] && { header=0 ;          }
+    [[ $no_header    -gt 0 ]] && { header=0 ;          }
+    [[ $verbose      -gt 0 ]] && { header=1 ; quite=0; }
+
+    # -- Prepare script --
+
+    if ! [[ -n $list ]]; then
+        declare fa_script_tmp=$(mktemp)
+
+        {
+            if [[ -n $cmd  ]]; then
+                echo "$cmd"
+            elif [[ -n $file ]]; then
+                cat "$file"
+            else
+                cat
+            fi
+        } > "$fa_script_tmp"
+
+        [[ -n $show_script ]] && {
+            cat "$fa_script_tmp"
+            rm -f "$fa_script_tmp"
+
+            return
+        }
+    fi
+
+    # -- Max length of repo names --
+    declare max_length=$(n-repo-.list | awk 'length > m { m = length; } END { print m }')
+    [[ $max_length -gt $N_REPO_LINE_REPO_LEN ]] && max_length=$N_REPO_LINE_REPO_LEN
+
+    # -- Repo list --
+    [[ -n $reorder ]] && repos+=(-r)
+    declare repos_list=($(n-repo-.list "${repos[@]}"))
+
+    # -- Looping through repo list --
+
+    declare repo
+    for repo in "${repos_list[@]}"; do
+        cd "$N_REPO_DIR_ROOT/$repo"
+
+        [[ -n $package ]] && {
+            [[ -e composer.json ]] || continue;
+
+            composer show $package >& /dev/null || continue;
+        }
+
+        [[ -n $changes ]] && {
+            declare has_changhes=
+
+            if [[ ! $(git status 2> /dev/null | tail -n1) =~ ^'nothing to commit' ]]; then
+                has_changhes=1
+            fi
+
+            [[ $changes == no  && -n $has_changhes ]] && continue
+            [[ $changes == yes && -z $has_changhes ]] && continue
+        }
+
+        declare branch_cur="$(git rev-parse --abbrev-ref HEAD 2> /dev/null)"
+
+        [[ -n $branch && ! $branch_cur =~ ^$branch ]] && { continue; }
+
+        # -- Making header --
+
+        if [[ $header -gt 0 ]]; then
+            declare repo_header="$(printf -- "${N_REPO_LINE_COLOR_NAME}REPO: [ %-${max_length}s ]${NC}" "${repo::$max_length}")"
+
+            declare origin="$(git ls-remote --get-url origin)"
+
+            declare lcd="$(git log -1 --format=%cd --date=relative | sed -r 's~s? ago~~; s~minute~minut~;  s~second~sec~')"
+            declare lcd_unit="${lcd##* }"
+            declare lcd_val="${lcd% *}"
+            declare lcd="$(printf '%2s %-5s' "$lcd_val" "$lcd_unit")"
+
+            declare local_changes=.
+
+            declare files_modified=$(git status --untracked-files=no --porcelain | head -n1 | wc -l)
+            declare files_untracked=$(git ls-files --others --exclude-standard | head -1 | wc -l)
+
+            if [[ $files_untracked -eq 1 && $files_modified -eq 0 ]]; then
+                local_changes=${N_REPO_LINE_COLOR_UNTRACKED}U${NC}
+            elif [[ $files_untracked -eq 1 && $files_modified -eq 1 ]]; then
+                local_changes=${N_REPO_LINE_COLOR_MOD_UNTRACKED}M${NC}
+            elif [[ $files_untracked -eq 0 && $files_modified -eq 1 ]]; then
+                local_changes=${N_REPO_LINE_COLOR_MODIFIED}M${NC}
+            else
+                local_changes=.
+            fi
+
+            declare discrepancy=$(git status -sb | head -1 | grep -Po '\[[^]]+\]')
+            declare behind="$(echo $discrepancy | grep -oP '(?<=behind )\d+')"
+            declare ahead="$(echo $discrepancy | grep -oP '(?<=ahead )\d+')"
+
+            [[ -n $ahead  ]] && { [[ $ahead  -gt 9 ]] && ahead=$N_REPO_LINE_AHEAD_SIGN; ahead="${N_REPO_LINE_COLOR_AHEAD}${ahead}${NC}"  ; } || ahead='.'
+            [[ -n $behind ]] && { [[ $behind -gt 9 ]] && behind="$N_REPO_LINE_BEHIND_SIGN"; behind="${N_REPO_LINE_COLOR_BEHIND}${behind}${NC}"; } || behind='.'
+
+            declare state="$ahead$behind$local_changes"
+
+            declare br_len="$N_REPO_LINE_BRANCH_LEN"
+
+            declare line="$(printf -- "%s %s [%-${br_len}s %s]" "$repo_header" "$lcd" "${branch_cur::$br_len}" "$state")"
+
+            if [[ $N_REPO_LINE_LONG -gt 0 ]]; then
+                if [[ -n $verbose ]]; then
+                    declare msg="$(git log -1 --format=%s)"
+                    line="$line '$msg'"
+                else
+                    line="$line ($origin)"
+                fi
+            fi
+
+            echo "$line"
+        fi
+
+        [[ -n $list ]] && { continue; }
+
+        [[ $quite -gt 0 ]] && {
+            echo -n '.'
+            declare fa_log="${fa_script_tmp}-${repo}.err"
+        }
+
+        {
+            if [[ -z $execute_as_script ]]; then
+                ( [[ $verbose -ge 2  ]] && set -x ;  source $fa_script_tmp )
+            else
+                declare bash_opts=()
+                [[ $verbose -ge 2  ]] && bash_opts+=('-x')
+
+                bash "${bash_opts[@]}" $fa_script_tmp
+            fi
+        } |& {
+            if [[ $quite -gt 0 ]]; then
+                cat > "$fa_log"
+            else
+                cat
+            fi
+        }
+
+        declare result=${PIPESTATUS[0]}
+
+        if [[ $quite -gt 0 ]]; then
+            [[ $result -ne 0 ]] && {
+                echo
+                echo "${DR}--- [ $repo ] ERROR ($(_n_repo-error $result)) ---${NC}"
+                echo
+
+                cat "$fa_log"
+                echo
+            }
+
+            rm -f "$fa_log"
+        fi
+    done |& {
+        if [[ -n $column ]]; then column -t ; else cat; fi
+        if [[ -n $less   ]]; then less   -S ; else cat; fi
+    }
+
+    [[ $quite -gt 0 ]] && echo
+
+    if ! [[ -n $list ]]; then
+        rm -f "$fa_script_tmp"
+    fi
+)
+
+_n_repo-error() {
+    declare result="$1"
+    declare error='ok'
+
+    if [[ $result -ne 0 ]]; then
+        case $result in
+            126) error='cant execute'             ;;
+            127) error='not found'                ;;
+            128) error='bad argument'             ;;
+  $((128 + 1 ))) error='hangup'                   ;;
+  $((128 + 2 ))) error='interrupt'                ;;
+  $((128 + 3 ))) error='quit'                     ;;
+  $((128 + 4 ))) error='illegal instruction'      ;;
+  $((128 + 5 ))) error='trace/breakpoint trap'    ;;
+  $((128 + 6 ))) error='abort'                    ;;
+  $((128 + 7 ))) error='emulation trap'           ;;
+  $((128 + 8 ))) error='arithmetic exception'     ;;
+  $((128 + 9 ))) error='killed'                   ;;
+  $((128 + 10))) error='bus error'                ;;
+  $((128 + 11))) error='segmentation fault'       ;;
+  $((128 + 12))) error='bad system call'          ;;
+  $((128 + 13))) error='broken pipe'              ;;
+  $((128 + 15))) error='terminated'               ;;
+  $((128 + 16))) error='user signal 1'            ;;
+  $((128 + 17))) error='user signal 2'            ;;
+            255) error='exit status out of range' ;;
+              *) error="$result"     ;;
+        esac
+    fi
+
+    echo -ne "$error"
+}
+
+_n_repo-cache-file() {
+    declare fa_cache="$N_REPO_DIR_ROOT/.cache/$1"
+
+    [[ ! -e $fa_cache ]] && touchf "$fa_cache"
+    [[ ! -e $fa_cache ]] && return 1
+
+    echo "$fa_cache"
+}
+
+n-repo-l()      { n-repo-do "$@" -l; }
+
+alias rpn=n-repo
+
+n-repo-.func-name() {
+    declare prefix='n-repo-'
+    declare cmd="$1"
+
+    declare funcname="${prefix}${cmd}"
+    if declare -f "$funcname" > /dev/null; then
+        echo "$funcname"
+        return
+    fi
+
+    declare ns
+    for ns in ${N_REPO_NS_IMPORT//[,:]/ }; do
+        declare funcname="${prefix}${ns}.${cmd}"
+        if declare -f "$funcname" > /dev/null; then
+            echo "$funcname"
+            return
+        fi
+    done
+
+    echo "No command [${1}] is found!" >&2
+    return 1
+}
+
+n-repo-.list-cmd() {
+    declare full
+    # -- Arguments --
+    declare flags="fOA" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) return ;;
+            f) full=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    declare prefix='n-repo-'
+
+    declare -F | sed 's/declare -f //' | grep -P "^$prefix" | sed -e "s~$prefix~~" | {
+        if [[ -n $full ]]; then cat; else _n_repo-cmd-list-namespaces; fi
+    }
+}
+
+_n_repo-show-time() {
+    declare name="$1"
+    declare start="$2"
+
+    declare end=$(date '+%s')
+    declare secs="$((end - start))";
+
+    echo
+    printf "${name/n-repo-/} in %02d:%02d:%02d\n" "$((secs/3600))" "$((secs/60%60))" "$((secs%60))"
+}
+
+_n_repo-cmd-list-namespaces() {
+    declare sed_opts ns
+    for ns in ${N_REPO_NS_IMPORT//[,:]/ }; do
+        sed_opts+=(-e "s~${ns}\.~~")
+    done
+
+    if [[ -n $sed_opts ]]; then
+        sed "${sed_opts[@]}"
+    else
+        cat
+    fi
+}
+
+n-repo-.show() {
+    [[ $1 = -O ]] && return;
+    [[ $1 = -A ]] && { n-repo-.list-cmd; return; }
+
+    declare name="$1"
+    func="$(n-repo-.func-name "$name")" || return 1
+
+    type "$func" | less -S
+}
+
+n-repo-help() {
+    declare prefix='_n_repo-help-command-'
+
+    [[ $1 = -O ]] && return;
+    [[ $1 = -A ]] && {
+        declare -F | sed 's/declare -f //' | grep -P "^$prefix" | sed -e "s~$prefix~~" |
+            _n_repo-cmd-list-namespaces
+
+        return
+    }
+
+    [[ -z $1 ]] && { _n_repo-help-main | less -FX; return; }
+
+    declare cmd="$1" help
+
+    {
+        help="_n_repo-help-command-$cmd"
+        if declare -f "$help" > /dev/null; then
+            $help; return
+        fi
+
+        declare func
+        func="$(n-repo-.func-name "$cmd")" || return 1
+
+        declare prefix_cmd='n-repo-'
+        declare cmd="$(echo "$func" | sed "s:$prefix_cmd::")"
+
+        help="_n_repo-help-command-$cmd"
+        if declare -f "$help" > /dev/null; then
+            $help; return
+        fi
+
+        type "$func"
+    } | less -FX
+}
+
+n-repo-version() {
+    [[ $1 = -O || $1 = -A ]] && return;
+
+    echo 'RPN - Bash tool for managing a set of repositories as a bunch'
+    echo 'Version: 1.1'
+}
+
+n-repo-.hint.branches-cur() {
+    declare cache="$1"
+    declare fa_cache="$(_n_repo-cache-file "$FUNCNAME")" || return 1
+
+    if [[ -n $cache ]]; then
+        cached-cmd "$fa_cache" "$FUNCNAME" -u $cache
+    else
+        n-repo-do -c "git rev-parse --abbrev-ref HEAD" | sort -u | tee "$fa_cache"
+    fi
+}
+
+
+n-repo-.update() {
+    [[ $1 = -O || $1 = -A ]] && return;
+
+    [[ ! -d "$N_REPO_DIR_INSTALL/.git" ]] && {
+        echo "No .git directory at dir-install:[$N_REPO_DIR_INSTALL]"
+        echo "Update is impossible";
+
+        return 1;
+    }
+
+    (
+        cd "$N_REPO_DIR_INSTALL"
+
+        declare branch="$(git rev-parse --abbrev-ref HEAD 2> /dev/null)"
+        declare origin="$(git ls-remote --get-url origin)"
+
+        echo "-- Pulling code from [$origin]:[$branch]"
+        git pull
+    )
+
+    declare res=$?
+
+    if [[ $res -eq 0 ]]; then
+        echo '-- Updating code at shell'
+        source "$N_REPO_DIR_INSTALL/src/init.in"
+        rpn version
+    else
+        echo "Error pulling code [$res]"
+    fi
+}
+
+n-repo() {
+    [[ -z $1 ]] && {
+        n-repo-.list-cmd
+
+        return
+    }
+
+    declare func help name cmd
+    declare prefix='n-repo-'
+
+    if [[ $2 = help || $2 = .show ]]; then
+        {
+            name="$1"
+
+            func="$(n-repo-.func-name "$name")" || return 1
+            cmd="$(echo "$func" | sed "s:$prefix::")"
+
+            help="_n_repo-help-command-$cmd"
+
+            if declare -f "$help" > /dev/null && [[ $2 = help ]]; then
+                $help
+            else
+                type "$func"
+            fi
+
+        } | less -FX
+
+        return
+    fi
+
+    func="$(n-repo-.func-name "$1")" || return 1
+
+    "$func" "${@:2}"
+}
+
+_n-repo() {
+    declare cur="${COMP_WORDS[COMP_CWORD]}"
+    declare cmd="${COMP_WORDS[1]}"
+    declare prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    COMPREPLY=()
+
+    if [[ ${COMP_CWORD} -eq 1 ]] ; then
+        declare commands
+
+        [[ '.' == "${cmd:0:1}" ]] && {
+            commands="$(n-repo | grep -P "^\.")";
+        } || {
+            commands="$(n-repo | grep -Pv "^\.")";
+        }
+
+        COMPREPLY=( $( compgen -W "$commands" -- "$cur" ) )
+    elif  [[ ${COMP_CWORD} -gt 1 ]] ; then
+        declare opts
+
+        if [[ "${cur:0:1}" == '-' ]]; then
+            declare func="$(n-repo-.func-name "$cmd")" || return 1
+
+            opts="$($func -O)";
+        elif [[ "${prev}" == '-p' ]]; then
+            opts="$(n-repo-.hint.package $N_REPO_CACHE_PACKAGE)";
+        elif [[ "${prev}" == '-b' ]]; then
+            opts="$(n-repo-.hint.branches-cur $N_REPO_CACHE_BRANCHES_CUR)";
+        elif [[ "${prev}" == '-r' || "${prev}" == '-R' ]]; then
+            opts="$(n-repo-.list)";
+        else
+            declare func="$(n-repo-.func-name "$cmd")" || return 1
+
+            opts="$($func -A)";
+            opts="$opts $($func -O)";
+            opts="$opts help .show";
+        fi
+
+        COMPREPLY=($( compgen -W "${opts}" -- "${cur}" ));
+    fi
+
+    return 0
+}
+
+complete -F _n-repo n-repo rpn
+
+# -- Help ------------------------------------------------------------------------------------
+
+_n_repo-help-command-find() {
+cat <<'EOL'
+rpn find [options] <name> [<name>] - Find files in filtered repos (and grep them if needed)
+
+Default `search` is made with -name "<name>" options, and max depth set by `find-depth` option
+You can overide this with `searching` options
+
+Default `action` is printing out short or full name of found file (set by `find-short` option)
+You can overide this with `actions` options
+
+Names are <tab completed> by list generated with `.hint.find` command, which looks files in:
+- root of every repo (with -maxdepth 1)
+- directories listed in `find-hint` option with unlimited depth
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-R <repo>     - execute on all repos, but process repo <repo> first; multioption (-R rp1 -R rp2 -R rp3)
+-p <package>  - execute on repos which have composer package <package>
+
+For -r|-R options you can set '.' value which mean 'current repo' (in $PWD)
+
+-- Searching --
+-i <iname> - look for -iname "*<iname>*" [multioption]
+-x <regex> - look for -regex ".*<regex>" [multioption]
+-d <depth> - set max depth of searching (from repo subdirectory)
+
+-- Actions --
+-c          - print content of found files (cat)
+-g <string> - grep -P <string> of found files
+-G <string> - grep -F <string> of found files
+-s - Show short path to path (from repo subdirectory)
+-f - Show full path to path (from root)
+EOL
+}
+
+
+_n_repo-help-command-l() {
+
+cat <<'EOL'
+rpn l [options] - Print repo state list on each filtered repo
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-R <repo>     - execute on all repos, but process repo <repo> first; multioption (-R rp1 -R rp2 -R rp3)
+-p <package>  - execute on repos which have composer package <package>
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+
+List descripton:
+
+REPO: [ xxxxxxxxxxx  ]  4 week  [release/v2.3.1            6▼M] (git@domain.com:xxxxxx/xxxxxxxxxxx.git)
+        ↑               ↑        ↑                         ↑↑↑         ↑
+        repo            commit   branch                    ||changes   origin
+                                                           |behind
+                                                           ahead
+
+repo    - project directory name
+commit  - last commit time ago
+branch  - current branch
+ahead   - number commits of commits ahead of remote branch (more than 9: ▲)
+behind  - number commits of commits behind from remote branch (more than 9: ▼)
+changes - M - having modified files, U - having uncommitted files
+origin  - origin address
+EOL
+
+}
+
+_n_repo-help-command-cfg() {
+
+cat <<'EOL'
+-- Directories --
+dir-groups           path to `groups-directory`       [~/projects/_groups]
+dir-root             path to current `list-directory` [~/projects/_groups/main]
+dir-install          path to rpn dist installed
+
+-- Commands parameters --
+ns-import            string of command namespaces imported to global namespace delimited by comma ['git,dc']
+quite                default output mode is `quite-mode` [0 or 1]
+
+-- Completion caches life-times in seconds --
+cache-branches       all known branches     (in all repos) [60]
+cache-branches-cur   current branches       (in all repos) [60]
+cache-find-hint      file names             (in all repos) [600]
+cache-package        composer package names (in all repos) [600]
+
+-- Repo state list parameters --
+line-ahead-sign           sing for ahead  commits (when exceeds 9) [▲]
+line-behind-sign          sing for behind commits (when exceeds 9) [▼]
+line-branch-len           max length of branch name [25]
+line-long                 long format of `repo-state-list` (includes: origin or last commit message) [1 or 0]
+
+line-color-name           color of repo name
+line-color-ahead          color of `ahead` symbol
+line-color-behind         color of `behind` symbol
+line-color-modified       color of `modified` symbol
+line-color-untracked      color of `untracked` symbol
+line-color-mod-untracked  color of `modified and untracked` symbol
+
+-- Find command parameters --
+find-depth                default -maxdepth of searching
+find-hint                 list of directories in repo where to find files for <tab-completion>
+find-short                print short file name (from repo subdirectory) [1 or 0]
+
+-- View config --
+view-config-as-env        show configuration as ENVIRONMENT_VARIABLES (or config-parameters)
+view-man-as-man           show manual as man page (filter README.md with `pandoc` and `nroff`)
+EOL
+}
+
+_n_repo-help-command-do() {
+
+cat << 'EOL'
+rpn do '<any command>' [options] - Run any command on each filtered repo
+
+Option value <tab completion> is working for: -b, -r, -R and -p options.
+
+By default commands are executed in `subshell` .
+This can be overriden by `-s` option to execute code as a `standalone script file`.
+
+-- Filters --
+-b <branch>   - execute on repos with branch '<branch>.*'
+-r <repo>     - execute on repos with name <repo>; multioption (-r rp1 -r rp2 -r rp3)
+-R <repo>     - execute on all repos, but process repo <repo> first; multioption (-R rp1 -R rp2 -R rp3)
+-p <package>  - execute on repos which have composer package <package>
+-g            - execute on repos which do     have local changes
+-G            - execute on repos which do NOT have local changes
+
+For -r|-R options you can set '.' value which mean 'current repo' (in $PWD)
+
+-- Verbosity --
+-q  - Turn on 'quite mode' (output is suppressed, and is showed only if return code is none zero)
+-Q  - Turn on 'quite mode' only if N_REPO_QUITE is set
+-v  - Turn on 'verbose mode' (despite N_REPO_QUITE)
+
+-- Output --
+-l - print only repo state list
+-h - print header (repo state list)
+-H - print no header
+-L - pipe output to `less`
+
+-- Debug --
+-vv  - Turn on 'verbose mode' + 'debug mode' (every command in executed code is printed)
+-S   - only print out code will be executed (useful for debugging)
+
+-- Code --
+-f <file>   - execute file <file>
+-c <code>   - execute code <code>
+-s          - execute as standalone script file
+EOL
+
+}
+
+_n_repo-help-main() {
+cat <<'EOL'
+RPN - Bash tool for manipulatiing multiple repositories
+
+## Environment
+
+N_REPO_DIR_ROOT   - path to your current `list-directory`
+N_REPO_DIR_GROUPS - path to your `groups-directory`
+
+## Command list
+EOL
+
+_n_repo-help-command-cmdlist
+}
+
+_n_repo-readme() {
+    declare fr_readme="README.md"
+    declare dir="$N_REPO_DIR_INSTALL"
+    declare file
+
+    while [ "$dir" != '/' ]; do
+        file="$dir/$fr_readme"
+
+        [[ -f "$file" ]] && { echo "$file"; return; }
+
+        dir=$(dirname $dir)
+    done
+
+    echo "File [$fr_readme] not found!" >&2
+    return 1
+
+}
+
+n-repo-.man-create() {
+    declare fa_readme=$(_n_repo-readme) || return 1
+    declare fa_man="${fa_readme%.*}.man"
+
+    if ! which pandoc >& /dev/null; then
+        echo "Install [pandoc] for man page generation" >&2
+
+        return 1
+    fi
+
+    {
+        cat "$fa_readme"                                            |
+        sed 's: _: :g; s:_ : :g; s:```:=+=:g; s:`:_:g; s:=+=:```:g' |
+        sed '1 { s:<!-- # ::; s:-->::; }'                           |
+        pandoc -s -f markdown_github -t man                         |
+        sed '/^.TH/s:^.*:.TH "rpn" "1" "" "" "":'
+    } > "$fa_man"
+}
+
+n-repo-man() {
+    declare man
+
+    # -- Arguments --
+    declare flags="AOmt" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            O) _complete-cmd-options "$flags"; return ;;
+            A) return ;;
+            m) man=1 ;;
+            t) man=0 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+    [[ -z $man ]] && man="$N_REPO_VIEW_MAN_AS_MAN"
+
+    declare fa_readme=$(_n_repo-readme) || return 1
+    declare fa_man="${fa_readme%.*}.man"
+
+    if [[ $man -gt 0  ]]; then
+        if [[ -e "$fa_man" ]]; then
+            command man -l "$fa_man"
+        else
+            {
+                echo "-- No man file is found at [$fa_man] --"
+                echo
+                cat "$fa_readme"
+            } | less
+        fi
+    else
+        less "$fa_readme"
+    fi
+}
+
+_n_repo-help-command-completion() {
+cat << 'EOL'
+`rpn` is trying to support `tab-completion` anywhere it possibly can
+
+-- Common completions --
+
+rpn <tab>        # Will propose user `command`
+rpn .<tab>       # Will propose system `command` (started with a dot '.')
+
+rpn help <tab>   # Will propose `command` or `topic` which have predefined help-info
+rpn cmd -<tab>   # Will propose cmd-`option`
+
+rpn cmd -b <tab> # Will propose list of all current branches
+rpn cmd -r <tab> # Will propose list of repos
+rpn cmd -R <tab> # Will propose list of repos
+rpn cmd -p <tab> # Will propose list of packages
+
+-- Command specific completions --
+
+rpn cd         <tab> # Will propose list of all repos
+rpn find       <tab> # Will propose list of files (list is configured by `find-hint` option)
+rpn package    <tab> # Will propose list of all possible packages
+rpn git.switch <tab> # Will propose list of all possible branches
+
+### Command completion caching
+
+Because generation of `hint-lists` can be time consuming, heavy `hint-lists` are cached in files in `$N_REPO_DIR_ROOT/.cache` subdirectory.
+
+`hint-lists` generation commands are system and prefixed with `.hint` prefix.
+
+For example for package list it is: `rpn .hint.package`
+
+Cache files are kept due to `cache-lifetime` setup in cache-* parameters in seconds
+
+For example `cache-package 600` which means than `cache-file` with package-list will be regenerated after 600 seconds since it was (re)created last time.
+
+To force recreation of `cache-file` you should run corresponding `hint-command`
+
+You can see current cache settings with `rpn cfg cache`
+EOL
+}
+
+_n_repo-help-command-cmdlist() {
+    declare prefix='_n_repo-help-cmd-list-'
+    declare func
+
+    for func in $(declare -F | sed 's/declare -f //' | grep -P "^$prefix" | sort); do
+        echo
+        "$func"
+    done | _n_repo-cmd-list-namespaces
+}
+
+_n_repo-help-cmd-list-00-main() {
+cat <<'EOL'
+-- Main --
+l    - print repo state list
+do   - execute any code inside each repo directory
+find - find files in current bunch of repos
+
+-- Help --
+man         - show rpn manual (README file)
+help        - print command list with short description
+help <cmd>  - print <cmd> command help-section
+<cmd> help  - print <cmd> command help-section or bash-function body (if no help-section)
+version     - print version
+
+-- System --
+cd <repo>       - cd to repo directory
+.show <cmd>     - print <cmd> bash-function body
+<cmd> .show     - print <cmd> bash-function body
+.update         - update rpn code from github
+.cd-group <grp> - cd to <grp> directory
+.dirs           - print directories in current 'list-directory'
+.hint.<xxxx>    - create and print 'hint-list' <xxxx>
+
+-- Config --
+cfg  - print environment configuration
+root - print or set current `list-directory`
+EOL
+}

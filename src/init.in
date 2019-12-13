@@ -1,0 +1,52 @@
+# MIT License
+# Copyright (c) 2019 Sergey Boborykin (aka XilefNori)
+
+# Script ENV -------------------------------------------------------------------------------------
+
+SRC="${BASH_SOURCE[0]//\\//}"
+[[ -z "$SRC" ]] && SRC="$(readlink -f $0)"
+DIR="$(cd -P "${SRC%/*}" > /dev/null && pwd)"
+
+N_REPO_DIR_SOURCE="$(cd "${DIR}" > /dev/null && pwd)"
+
+# Fuctions ---------------------------------------------------------------------------------------
+
+init-rpn() {
+    declare verbose
+
+	export LESSCHARSET LESS
+
+	[[ -z "$LESSCHARSET" ]] && LESSCHARSET='utf-8'
+	[[ -z "$LESS"        ]] && LESS='-X -F -M -R -i --follow-name -x4 -j3'
+
+    # -- Arguments --
+    declare flags="v" OPTIND=1
+    declare -a params
+    for (( ; OPTIND <= $#; )) do
+        if getopts "$flags" flag; then case $flag in
+            v) verbose=1 ;;
+        esac; else
+            params+=("${!OPTIND}"); ((OPTIND++))
+        fi
+    done
+
+	declare da_file
+	declare dirs=(sys lib mod config)
+
+	[[ -n "$verbose" ]] && { echo "$FUNCNAME" >&2 ; }
+
+	for dir in ${dirs[@]}; do
+		[[ ! -d "$N_REPO_DIR_SOURCE/$dir" ]] && {
+			[[ -n "$verbose" ]] && { echo "Skipping [$dir] ..." >&2 ; }
+
+			continue;
+		}
+
+		for da_file in "$N_REPO_DIR_SOURCE/$dir/"*; do
+			[[ -n "$verbose" ]] && { printf " - %s\n" "$(basename "$da_file")"  >&2; }
+			source "$da_file"
+		done
+	done
+}
+
+init-rpn
